@@ -1,6 +1,6 @@
 # RPVMM: documentação matemática e computacional
 
-Roteirização e Programação de Venda, produção e Movimentação Marítima. Este documento descreve o que o arquivo `rpvmm.jl` faz, como o problema é formulado matematicamente e como a formulação é implementada e resolvida. A versão `rpvmm.jl` acrescenta restrições flexíveis, descritas na [seção 8](#8-restrições-flexíveis-rpvmmjl).
+Roteirização e Programação de Venda, produção e Movimentação Marítima. Este documento descreve o que o arquivo `rpvmm.jl` faz, como o problema é formulado matematicamente e como a formulação é implementada e resolvida. Esta versão inclui restrições flexíveis, descritas na [seção 8](#8-restrições-flexíveis).
 
 ---
 
@@ -8,7 +8,7 @@ Roteirização e Programação de Venda, produção e Movimentação Marítima. 
 
 ### 1. Preparar a pasta
 
-Coloque na **mesma pasta** o script `rpvmm.jl` e todos os CSVs de entrada:
+Coloque na **mesma pasta** o script (`rpvmm.jl`, ou o `rpvmm.jl` original) e todos os CSVs de entrada:
 
 ```
 Projeto-RPVMM-main/
@@ -148,7 +148,7 @@ Para melhorar a numérica, tudo é reescalado:
 
 - toneladas ficam em unidades de `ESCALA_TON = 1000` t (mil toneladas);
 - moeda fica em unidades de `ESCALA_MOEDA = 1000`;
-- preços e fretes por tonelada são multiplicados por $\text{ESCALA\_TON}/\text{ESCALA\_MOEDA}$.
+- preços e fretes por tonelada são multiplicados por $\text{escala}_{ton}/\text{escala}_{moeda}$.
 
 Na saída, os valores voltam às unidades originais.
 
@@ -164,7 +164,7 @@ Cada fábrica $f$ escoa por exatamente um POL, $\text{POL}(f)$. O mapeamento vem
 
 | Símbolo | Descrição |
 |---|---|
-| $T=\{t_0,\dots,t_N\}$ | Instantes (meses) do horizonte |
+| $T=\lbrace t_0,\dots,t_N\rbrace $ | Instantes (meses) do horizonte |
 | $F,\ \text{POL},\ \text{POD}$ | Fábricas, portos de origem e portos de destino |
 | $L = F\cup \text{POL}\cup \text{POD}$ | Locais com estoque |
 | $C$ | Clientes ativos |
@@ -173,7 +173,7 @@ Cada fábrica $f$ escoa por exatamente um POL, $\text{POL}(f)$. O mapeamento vem
 | $FP\subseteq F\times P$ | Pares fábrica-produto permitidos |
 | $CD\subseteq C\times \text{POD}$ | Pares cliente-POD com custo inland |
 | $R$ | Rotas (após filtros) |
-| $\Theta=\{(o,d,\ell)\}$ | **Trechos**: POL $o$, POD $d$, tempo de viagem $\ell$ |
+| $\Theta=\lbrace (o,d,\ell)\rbrace $ | **Trechos**: POL $o$, POD $d$, tempo de viagem $\ell$ |
 
 ### 3.2 Rotas multi-stop
 
@@ -181,8 +181,8 @@ Uma rota $r$ tem origens ordenadas $O_r=(o_1,\dots,o_{m})$ e destinos ordenados 
 
 - **Defasagem de descarga** no destino $j$: $\ell_{r,j}$. Por padrão, $\text{base}_j=\lfloor \text{ida}\cdot j/n + 0{,}5\rfloor$, somado ao tempo de operação dos portos (`TEMPO_OPERACAO`, padrão 0). Exige-se $\ell_{r,1}\le\dots\le\ell_{r,n}$.
 - **Ciclo** da rota: $\text{ciclo}_r=\max\big(1,\ \text{ida}+\text{volta}+\sum_{l\in O_r\cup D_r}\text{oper}_l\big)$. É o tempo que o navio fica ocupado após partir.
-- **Segmentos viáveis** de $r$: $S_r=\{(k,j): \text{existe produto que pode ir de } o_k \text{ a } d_j\}$.
-- **Segmentos por partida**: $S_{r,t}=\{(k,j)\in S_r : t+\ell_{r,j}\in T\}$. Só há variáveis onde a chegada cai dentro do horizonte.
+- **Segmentos viáveis** de $r$: $S_r=\lbrace (k,j): \text{existe produto que pode ir de } o_k \text{ a } d_j\rbrace $.
+- **Segmentos por partida**: $S_{r,t}=\lbrace (k,j)\in S_r : t+\ell_{r,j}\in T\rbrace $. Só há variáveis onde a chegada cai dentro do horizonte.
 
 Um produto $p$ pode fluir de $o$ para $d$ se estiver disponível em $o$ (produzido em fábrica que escoa por $o$, ou estoque inicial) e for demandado por algum cliente atendido por $d$. Isso define $\mathcal{P}(o,d)$.
 
@@ -190,7 +190,7 @@ Um produto $p$ pode fluir de $o$ para $d$ se estiver disponível em $o$ (produzi
 
 | Símbolo | Descrição |
 |---|---|
-| $D_{c,p,t}$ | Demanda do cliente $c$ pelo produto $p$ no mês $t$ (descarta $<1$ t) |
+| $D_{c,p,t}$ | Demanda do cliente $c$ pelo produto $p$ no mês $t$ (descarta $\lt 1$ t) |
 | $\pi_{c,p,t}$ | Preço de venda |
 | $V_{f,t}$ | Volume de produção da fábrica $f$ (multiplicado por `fator_capacidade` nos cenários) |
 | $I^0_{l,p}$ | Estoque inicial |
@@ -204,7 +204,7 @@ Um produto $p$ pode fluir de $o$ para $d$ se estiver disponível em $o$ (produzi
 | $\kappa^{in}_{c,d}$ | Custo inland por tonelada |
 | $h_l$ | Custo de estoque por tonelada-mês no local $l$ |
 | $\lambda^{bl},\lambda^{ss},\lambda^{sp},\lambda^{bal}$ | Penalidades de backlog, estoque de segurança, spot e balanceamento |
-| $\gamma=\text{dias\_ss}/30$ | Cobertura de segurança em meses |
+| $\gamma=\text{dias}_{ss}/30$ | Cobertura de segurança em meses |
 
 Os custos de estoque e as penalidades são **placeholders**, definidos como percentual do preço médio $\bar\pi$ quando o dado real não existe:
 
@@ -268,19 +268,19 @@ Por isso o código recomenda interpretar o **lucro operacional** e não o objeti
 ### 4.2 Função objetivo
 
 $$
-\max\ \ \underbrace{\sum \pi\, s + \sum \pi_{c,p,\tau}\, a}_{\text{receita}}
-\;-\; \underbrace{\sum_{r,t,\kappa}\phi_r(1-\delta_\kappa)\,\varphi_{r,t,\kappa}}_{\text{frete marítimo}}
-\;-\; \underbrace{\sum \kappa^{in}_{c,d}\, s_{c,d,p,t}}_{\text{inland}}
-\;-\; \underbrace{\sum_{l,p,t} h_l\, e_{l,p,t}}_{\text{estoque}}
-\;-\; \text{Pen}
+\max\ \ \underbrace{\sum \pi\  s + \sum \pi_{c,p,\tau}\  a}_{\text{receita}}
+\ -\  \underbrace{\sum_{r,t,\kappa}\phi_r(1-\delta_\kappa)\ \varphi_{r,t,\kappa}}_{\text{frete marítimo}}
+\ -\  \underbrace{\sum \kappa^{in}_{c,d}\  s_{c,d,p,t}}_{\text{inland}}
+\ -\  \underbrace{\sum_{l,p,t} h_l\  e_{l,p,t}}_{\text{estoque}}
+\ -\  \text{Pen}
 $$
 
 $$
-\text{Pen}=\lambda^{bl}\!\!\sum_{t<t_N}\! b_{c,p,t}+\lambda^{ss}\!\sum \sigma+\lambda^{sp}\!\sum \text{sp}_{c,p}+\lambda^{bal}\!\sum \text{mean}(\text{req})\,(c^{max}-c^{min})
+\text{Pen}=\lambda^{bl}\sum_{t\lt t_N} b_{c,p,t}+\lambda^{ss}\sum \sigma+\lambda^{sp}\sum \text{sp}_{c,p}+\lambda^{bal}\sum \text{mean}(\text{req})\ (c^{max}-c^{min})
 $$
 
-- Pares $(c,p)$ que **não** têm preço variável usam receita $\pi_{c,p,t}\,s$ no mês da venda.
-- Pares com preço variável (coortes, `PRECO_POR_COORTE = true`) usam $\pi_{c,p,\tau}\,a_{c,p,\tau,t}$: **demanda atrasada é vendida ao preço do mês da demanda**, não ao do mês da entrega.
+- Pares $(c,p)$ que **não** têm preço variável usam receita $\pi_{c,p,t}\ s$ no mês da venda.
+- Pares com preço variável (coortes, `PRECO_POR_COORTE = true`) usam $\pi_{c,p,\tau}\ a_{c,p,\tau,t}$: **demanda atrasada é vendida ao preço do mês da demanda**, não ao do mês da entrega.
 - Se `VALOR_RESIDUAL_PCT > 0`, soma-se o valor do estoque final dos PODs. O padrão é 0.
 - No cenário `recusa_livre`, $\lambda^{bl}=\lambda^{sp}=0$: o modelo pode recusar clientes sem custo, o que revela os deficitários.
 
@@ -344,7 +344,7 @@ $$
 c^{max}\ge \frac{e_{d,p,t}}{\text{req}_{d}},\qquad c^{min}\le \frac{e_{d,p,t}}{\text{req}_{d}}
 $$
 
-A penalidade $\lambda^{bal}\,\text{mean}(\text{req})\,(c^{max}-c^{min})$ empurra os PODs a terem coberturas parecidas.
+A penalidade $\lambda^{bal}\ \text{mean}(\text{req})\ (c^{max}-c^{min})$ empurra os PODs a terem coberturas parecidas.
 
 **(R9) Capacidade de estoque**
 
@@ -370,55 +370,55 @@ $$
 **(R11) Intake e calado por viagem.** Seja $Y_{r,t}=\sum_{(k,j)\in S_{r,t}}y_{r,k,j,t}$ o total transportado.
 
 $$
-\underline{Q}_r\, n_{r,t}\le Y_{r,t}\le \overline{Q}_r\, n_{r,t}
+\underline{Q}_r\  n_{r,t}\le Y_{r,t}\le \overline{Q}_r\  n_{r,t}
 $$
 
 Calado nos POLs, respeitando a ordem de carregamento (a carga acumulada até a origem $k$ não excede o calado dessa origem):
 
 $$
-\sum_{(k',j)\in S_{r,t},\,k'\le k}y_{r,k',j,t}\le \text{DWT}_{o_k}\,n_{r,t}
+\sum_{(k',j)\in S_{r,t},\ k'\le k}y_{r,k',j,t}\le \text{DWT}_{o_k}\ n_{r,t}
 $$
 
 Calado nos PODs, com `CALADO_DESCARGA_POR_PARADA = true` (o navio que chega ao destino $j$ ainda carrega tudo o que vai para $j$ e adiante):
 
 $$
-\sum_{(k,j')\in S_{r,t},\,j'\ge j}y_{r,k,j',t}\le \text{DWT}_{d_j}\,n_{r,t}
+\sum_{(k,j')\in S_{r,t},\ j'\ge j}y_{r,k,j',t}\le \text{DWT}_{d_j}\ n_{r,t}
 $$
 
-**(R12) Frete escalonado.** Com $\text{cap}=\overline{Q}_r\,n_{r,t}$:
+**(R12) Frete escalonado.** Com $\text{cap}=\overline{Q}_r\ n_{r,t}$:
 
 $$
-\sum_{\kappa}\varphi_{r,t,\kappa}=Y_{r,t},\qquad \varphi_{r,t,\kappa}\le (hi_\kappa-lo_\kappa)\,\text{cap}
+\sum_{\kappa}\varphi_{r,t,\kappa}=Y_{r,t},\qquad \varphi_{r,t,\kappa}\le (hi_\kappa-lo_\kappa)\ \text{cap}
 $$
 
-O desconto cresce com a ocupação, então o frete efetivo é **côncavo** no volume. Um otimizador de minimização de custo tenderia a colocar todo o volume na faixa mais barata (a 3). Para forçar o preenchimento em ordem, usa-se *big-M* com binárias, com $M_\kappa=(hi_\kappa-lo_\kappa)\,\overline{Q}_r\,\hat N_{a}$:
+O desconto cresce com a ocupação, então o frete efetivo é **côncavo** no volume. Um otimizador de minimização de custo tenderia a colocar todo o volume na faixa mais barata (a 3). Para forçar o preenchimento em ordem, usa-se *big-M* com binárias, com $M_\kappa=(hi_\kappa-lo_\kappa)\ \overline{Q}_r\ \hat N_{a}$:
 
 $$
 \varphi_{r,t,\kappa}\le M_\kappa z_{r,t,\kappa},\qquad
-\varphi_{r,t,\kappa-1}\ge (hi_{\kappa-1}-lo_{\kappa-1})\,\text{cap}-M_{\kappa-1}(1-z_{r,t,\kappa}),\qquad z_{r,t,\kappa}\le z_{r,t,\kappa-1}
+\varphi_{r,t,\kappa-1}\ge (hi_{\kappa-1}-lo_{\kappa-1})\ \text{cap}-M_{\kappa-1}(1-z_{r,t,\kappa}),\qquad z_{r,t,\kappa}\le z_{r,t,\kappa-1}
 $$
 
 Ou seja, a faixa $\kappa$ só pode ter volume se a faixa $\kappa-1$ estiver cheia.
 
-> **Premissa:** os navios de uma mesma (rota, mês) carregam igual. A ocupação é $Y/(\overline{Q}_r\,n)$.
+> **Premissa:** os navios de uma mesma (rota, mês) carregam igual. A ocupação é $Y/(\overline{Q}_r\ n)$.
 
 **(R13) Ligação rota↔trecho.** Cada segmento $(k,j)$ de $r$ corresponde ao trecho $i=(o_k,d_j,\ell_{r,j})$:
 
 $$
-\sum_{p\in\mathcal P(o,d)}x_{i,p,t}=\sum_{r,(k,j):\,(o_k,d_j,\ell_{r,j})=i}y_{r,k,j,t}
+\sum_{p\in\mathcal P(o,d)}x_{i,p,t}=\sum_{r,(k,j):\ (o_k,d_j,\ell_{r,j})=i}y_{r,k,j,t}
 $$
 
 **(R14) Ligação trecho↔estoques dos portos**
 
 $$
-\text{ld}_{o,p,t}=\sum_{i:\,o(i)=o}x_{i,p,t},\qquad
-\text{ul}_{d,p,\tau}=\sum_{i:\,d(i)=d,\ t+\ell_i=\tau}x_{i,p,t}+Tr_{d,p,\tau}
+\text{ld}_{o,p,t}=\sum_{i:\ o(i)=o}x_{i,p,t},\qquad
+\text{ul}_{d,p,\tau}=\sum_{i:\ d(i)=d,\ t+\ell_i=\tau}x_{i,p,t}+Tr_{d,p,\tau}
 $$
 
 **(R15) Frota por armador e mês.** Um navio que parte em $t_s$ fica ocupado durante o ciclo:
 
 $$
-\sum_{r:\,a(r)=a}\ \sum_{t_s:\ t_s\le t\le t_s+\text{ciclo}_r-1}n_{r,t_s}\le \bar N_{a,t}
+\sum_{r:\ a(r)=a}\ \sum_{t_s:\ t_s\le t\le t_s+\text{ciclo}_r-1}n_{r,t_s}\le \bar N_{a,t}
 $$
 
 ### 4.4 Ideia central: fluxo por trecho, não por rota
@@ -450,7 +450,7 @@ Em vez de indexar o produto por rota, o modelo agrega o produto por **trecho** $
 ### 5.2 Filtros de rotas
 
 1. **Dominância exata** (`FILTRO_DOMINANCIA`). Duas rotas com o mesmo armador, origens, destinos (na ordem), tempos, ciclo e intake são equivalentes, exceto pelo frete. Mantém-se a mais barata. Isso não muda o ótimo: no log, 10117 → 10095 rotas.
-2. **Pré-filtro por corredor** (`PREFILTRO_K = 3`). Para cada corredor (armador, POL, POD, tempo de chegada, ciclo, intake) mantêm-se as $K$ rotas mais baratas. É **heurístico**: pode descartar uma rota que seria necessária para atender demanda ou escoar produção. No log, 10095 → 2293 rotas. A função `sensibilidade_prefiltro()` mede o efeito rodando com $K\in\{1,3,5,\infty\}$.
+2. **Pré-filtro por corredor** (`PREFILTRO_K = 3`). Para cada corredor (armador, POL, POD, tempo de chegada, ciclo, intake) mantêm-se as $K$ rotas mais baratas. É **heurístico**: pode descartar uma rota que seria necessária para atender demanda ou escoar produção. No log, 10095 → 2293 rotas. A função `sensibilidade_prefiltro()` mede o efeito rodando com $K\in\lbrace 1,3,5,\infty\rbrace $.
 
 ### 5.3 Esparsidade
 
@@ -481,9 +481,9 @@ Uma nota sobre os limites de tempo: `TEMPO_LIMITE_FASE1_S` (3600 s) e `TEMPO_LIM
 
 Resolver o MILP completo (todas as rotas, inteiras e binárias) é inviável. O código faz:
 
-**Fase 1: relaxação linear (LP).** Relaxam-se $n\in\mathbb Z$ e $z\in\{0,1\}$ para contínuos em $[0,\hat N]$ e $[0,1]$, e resolve-se com **todas** as rotas. Como o problema é de maximização, o valor da relaxação é um **limite superior** $UB$ do lucro ótimo (sobre o conjunto de rotas pós-pré-filtro).
+**Fase 1: relaxação linear (LP).** Relaxam-se $n\in\mathbb Z$ e $z\in\lbrace 0,1\rbrace $ para contínuos em $[0,\hat N]$ e $[0,1]$, e resolve-se com **todas** as rotas. Como o problema é de maximização, o valor da relaxação é um **limite superior** $UB$ do lucro ótimo (sobre o conjunto de rotas pós-pré-filtro).
 
-**Seleção de rotas.** Uma rota é "usada" se $\max_t n_{r,t}>10^{-3}$ (`LIMIAR_USO_ROTA`). Com `INCLUIR_IRMAS`, adicionam-se as rotas com mesmo (armador, origens, destinos), para dar alternativas de frete e tempo ao MIP.
+**Seleção de rotas.** Uma rota é "usada" se $\max_t n_{r,t}\gt 10^{-3}$ (`LIMIAR_USO_ROTA`). Com `INCLUIR_IRMAS`, adicionam-se as rotas com mesmo (armador, origens, destinos), para dar alternativas de frete e tempo ao MIP.
 
 **Fase 2: MIP exato.** Reconstrói-se o modelo só com as rotas selecionadas, agora com inteiras e binárias, e resolve-se até `GAP_MIP` ou o limite de tempo.
 
@@ -545,7 +545,7 @@ Os fretes dessas rotas são **estimados**, então o resultado deve ser lido com 
 
 ---
 
-## 8. Restrições flexíveis (`rpvmm.jl`)
+## 8. Restrições flexíveis
 
 ### 8.1 Por que a versão original ficou infactível
 
@@ -564,11 +564,11 @@ Cada restrição dura foi substituída por uma versão com **folga não negativa
 
 | Restrição | Versão flexível | Penalidade (por unidade) |
 |---|---|---|
-| R2 produção | $\sum_p q_{f,p,t}+\varepsilon^{ocio}_{f,t}=V_{f,t}$ | $0{,}5\,\bar\pi$ por ton ociosa |
-| R9 estoque fim do mês | $\sum_p e_{l,p,t}\le \text{Emax}_l+\varepsilon^{est}_{l,t}$ | $1{,}0\,\bar\pi$ por ton |
-| R9 estoque no pico | $\dots\le \text{Emax}_l+\varepsilon^{pico}_{l,t}$ | $1{,}0\,\bar\pi$ por ton |
-| R10 envio e recebimento | $\dots\le \text{Cap}+\varepsilon^{env/rec}$ | $1{,}0\,\bar\pi$ por ton |
-| R15 frota | $\dots\le \bar N_{a,t}+\varepsilon^{frota}_{a,t}$ | $1{,}0\,\bar\pi\cdot\overline{\overline{Q}}$ por navio-mês |
+| R2 produção | $\sum_p q_{f,p,t}+\varepsilon^{ocio}_{f,t}=V_{f,t}$ | $0{,}5\ \bar\pi$ por ton ociosa |
+| R9 estoque fim do mês | $\sum_p e_{l,p,t}\le \text{Emax}_l+\varepsilon^{est}_{l,t}$ | $1{,}0\ \bar\pi$ por ton |
+| R9 estoque no pico | $\dots\le \text{Emax}_l+\varepsilon^{pico}_{l,t}$ | $1{,}0\ \bar\pi$ por ton |
+| R10 envio e recebimento | $\dots\le \text{Cap}+\varepsilon^{env/rec}$ | $1{,}0\ \bar\pi$ por ton |
+| R15 frota | $\dots\le \bar N_{a,t}+\varepsilon^{frota}_{a,t}$ | $1{,}0\ \bar\pi\cdot\overline{\overline{Q}}$ por navio-mês |
 
 O objetivo passa a subtrair $\sum \text{pen}\cdot\varepsilon$ (`pen_flex`). A penalidade de frota é a receita de uma carga média, o que a torna maior que a margem de qualquer viagem. Ela só será "paga" quando não houver alternativa.
 
