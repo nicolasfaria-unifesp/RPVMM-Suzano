@@ -73,9 +73,9 @@ Aracruz,LimpoObscuro,V1,819
 Aracruz,LimpoTenaz,V1,854
 Aracruz,ArtificialZero,V1,52
 Aracruz,ArtificialUm,V1,1672
-Imperatriz,InferiorRaso,V2,"677,464"
+Imperatriz,InferiorRaso,V2,"677,4639999999999"
 Imperatriz,EscuroSereno,V2,"10161,838"
-Imperatriz,ExcelenteSupremo,V2,"6960,874"
+Imperatriz,ExcelenteSupremo,V2,"6960,874000000001"
 Imperatriz,ResistenteFirme,V2,"900,25"
 Imperatriz,ArtificialZero,V2,"1905,938"
 Imperatriz,ArtificialTres,V2,1438
@@ -115,7 +115,7 @@ Azkaban,ExcelenteSupremo,V8,0
 Azkaban,ExcelenteSupremo,V13,2
 Azkaban,ExcelenteRestrito,V2,10
 Azkaban,DiscretoCalmo,V12,"10275,319"
-Azkaban,ResistenteFirme,V2,"9395,487"
+Azkaban,ResistenteFirme,V2,"9395,487000000001"
 Azkaban,PuroAustero,V3,4518
 Azkaban,LimpoSombrio,V1,36
 Azkaban,LimpoTenaz,V1,2
@@ -142,12 +142,12 @@ Ribas,SuaveTerno,V16,314
 Ribas,MuitoBomPleno,V16,4012
 Ribas,ExcelenteSupremo,V16,4022
 Ribas,ArtificialCinco,V16,136
-Suzano,InferiorRaso,V9,"134,81"
+Suzano,InferiorRaso,V9,"134,8099999999998"
 Suzano,MuitoBomPleno,V5,78
-Suzano,MuitoBomIntenso,V9,"2475,2"
+Suzano,MuitoBomIntenso,V9,"2475,199999999988"
 Suzano,ImpuroVibrante,V9,"25,6"
 Suzano,ExcelenteSupremo,V3,82
-Suzano,ComumLiso,V10,"0,15"
+Suzano,ComumLiso,V10,"0,149999999999999"
 TresLagoas,InferiorRaso,V12,312
 TresLagoas,InferiorRaso,V13,476
 TresLagoas,MuitoBomPleno,V12,15286
@@ -269,7 +269,7 @@ Pandora,ExcelenteSupremo,V2,13826
 Walden,MuitoBomPleno,V7,0
 Walden,MuitoBomPleno,V8,8
 Walden,EscuroCauto,V1,0
-Walden,AlternativoBeta,V1,"542,353"
+Walden,AlternativoBeta,V1,"542,3530000000001"
 Walden,AlternativoAlpha,V1,70
 Walden,ExcelenteSupremo,V8,8
 Walden,LimpoSombrio,V1,"2067,806"
@@ -295,7 +295,7 @@ Portocel,MuitoBomPleno,V1,156
 Portocel,MuitoBomPleno,V7,486
 Portocel,MuitoBomPleno,V8,1702
 Portocel,MuitoBomPleno,V15,33643
-Portocel,MuitoBomIntenso,V9,"11,2"
+Portocel,MuitoBomIntenso,V9,"11,1999999999999"
 Portocel,MuitoEscuroDenso,V8,0
 Portocel,AlternativoBeta,V1,5128
 Portocel,ExcelenteSupremo,V1,12
@@ -323,7 +323,7 @@ Savois,EscuroSereno,V2,5310
 Savois,ExcelenteSupremo,V2,232
 Savois,PuroAustero,V3,512
 Sableport,MuitoBomPleno,V5,532
-Sableport,MuitoBomIntenso,V9,1384
+Sableport,MuitoBomIntenso,V9,"1383,999999999999"
 Sableport,ImpuroVibrante,V9,"230,4"
 Sableport,ArtificialZero,V5,364
 Shadowpeak,VolumosoAmplo,V3,2494
@@ -365,8 +365,8 @@ Sectorium,MuitoBomPleno,V13,512
 Sectorium,ExcelenteSupremo,V16,146
 Sectorium,ExcelenteSupremo,V12,78
 Stormbar,MuitoBomPleno,V5,2984
-Stormbar,MuitoBomPleno,V12,"0,051"
-Stormbar,MuitoBomIntenso,V9,"460,8"
+Stormbar,MuitoBomPleno,V12,"0,0509999999999999"
+Stormbar,MuitoBomIntenso,V9,"460,799999999999"
 Stormbar,AlteradoReverso,V5,548
 Stevanor,NaturalClaro,V1,430
 Stevanor,ExcelenteSupremo,V2,180

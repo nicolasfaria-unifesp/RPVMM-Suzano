@@ -12,17 +12,17 @@ arred(x) = floor(Int, x + 0.5)
 # =====================================================================
 # PARÂMETROS GERAIS
 # =====================================================================
-const TEMPO_LIMITE_S = 3600.0
-const GAP_MIP        = 0.01     # 1%: em escala Suzano 5% seriam milhões
+const TEMPO_LIMITE_S = 7200.0   # 30 min máx para a fase MIP (encerra e salva se atingir)
+const GAP_MIP        = 0.08     # 8%: tolerância rápida e estável para grande escala
 const RELAXAR_INTEIROS = false  # só vale com ESTRATEGIA = :direto
-const MIP_ESFORCO_HEURISTICO = 0.3
+const MIP_ESFORCO_HEURISTICO = 0.6  # 0.6: prioriza achar soluções inteiras logo no início
 
 # --- Estratégia de resolução ---
 #   :duas_fases -> Fase 1: LP com todas as rotas; Fase 2: MIP só com as rotas usadas (+irmãs)
 #   :direto     -> resolve uma vez com todas as rotas
 const ESTRATEGIA           = :duas_fases
 const FILTRO_DOMINANCIA    = true     # exato
-const TEMPO_LIMITE_FASE1_S = 3600.0
+const TEMPO_LIMITE_FASE1_S = 7200.0   # 30 min máx para a fase LP
 const LIMIAR_USO_ROTA      = 1e-3     # rota é "usada" na fase 1 se navios (em algum mês) > limiar
 const INCLUIR_IRMAS        = true
 const IPM_CROSSOVER        = true     # true: solução básica -> seleção de rotas mais discriminante
@@ -32,7 +32,7 @@ const ESCALA_TON   = 1000.0
 const ESCALA_MOEDA = 1000.0
 
 # Pré-filtro heurístico (0 desliga). Ver sensibilidade_prefiltro() para medir o impacto.
-const PREFILTRO_K        = 3
+const PREFILTRO_K        = 2          # K = 2: mantém as 2 rotas mais baratas por corredor (modelo mais ágil)
 const DEMANDA_MINIMA_TON = 1.0
 const MAX_VARIAVEIS      = 4_000_000
 
@@ -40,7 +40,7 @@ const MAX_VARIAVEIS      = 4_000_000
 const FROTA_MAX_POR_ARMADOR = 5
 
 # --- MODO TESTE ---
-const MODO_TESTE                  = true
+const MODO_TESTE                  = false
 const TESTE_MAX_INSTANTES         = 4
 const TESTE_MAX_ROTAS_POR_ARMADOR = 30
 const TESTE_MAX_PRODUTOS          = 15
@@ -99,10 +99,31 @@ limpa(x) = abs(x) < LIMIAR_RHS ? 0.0 : x
 # --- Saída, cenários e greenfield ---
 const EXPORTAR_RESULTADOS      = true
 const EXECUTAR_CENARIOS        = false   # true: roda estoque de segurança, expansão, recusa livre, greenfield
-const TEMPO_LIMITE_CENARIO_S   = 900.0
+const TEMPO_LIMITE_CENARIO_S   = 3600.0
 const EXPANSAO_CAPACIDADE_PCT  = 0.20
 const MARGEM_GREENFIELD        = 0.10    # prêmio de segurança sobre o frete estimado de rotas novas
 const GREENFIELD_MAX_CANDIDATAS = 200
+
+
+# =====================================================================
+# ROTA (struct concreta: acesso type-stable nos laços do modelo)
+# =====================================================================
+struct Rota
+    id::Int                    # posição no vetor de rotas do modelo (1..N)
+    id_orig::Int               # linha no CSV (rotas greenfield: negativo)
+    armador::String
+    origens::Vector{String}
+    destinos::Vector{String}
+    frete::Float64
+    min_in::Float64
+    max_in::Float64
+    lag_desc::Vector{Int}
+    ciclo::Int
+    ida::Int
+    volta::Int
+end
+com_id(r::Rota, k::Int) = Rota(k, r.id_orig, r.armador, r.origens, r.destinos, r.frete, r.min_in, r.max_in,
+                               r.lag_desc, r.ciclo, r.ida, r.volta)
 
 
 # =====================================================================
@@ -114,7 +135,7 @@ Base.@kwdef struct Cenario
     clientes_excluidos::Set{String} = Set{String}()
     fator_capacidade::Dict{String,Float64} = Dict{String,Float64}()   # fábrica => multiplicador
     recusar_livre::Bool = false          # true: sem penalidade por não atender (revela clientes deficitários)
-    rotas_extras::Vector{Any} = Any[]    # rotas novas (greenfield) usadas na fase 1
+    rotas_extras::Vector{Rota} = Rota[]  # rotas novas (greenfield) usadas na fase 1
 end
 
 
@@ -126,7 +147,7 @@ const DIR_SAIDA = joinpath(DIR, "saida")
 
 const COLUNAS_NUMERICAS = ["PRECO_VENDA", "DEMANDA", "FRETE_POR_TON", "MIN_INTAKE", "MAX_INTAKE",
     "CALADO_DWT", "MAX_ESTOQUE", "CUSTO_ESTOQUE", "CUSTO_INLAND_POR_TON", "QTD_DISPONIVEL",
-    "VOLUME_PRODUCAO", "TEMPO_IDA", "TEMPO_VOLTA", "TEMPO_OPERACAO",
+    "VOLUME_PRODUCAO", "TEMPO_IDA", "TEMPO_VOLTA", "TEMPO_IDA_VOLTA", "TEMPO_OPERACAO",
     "CAPACIDADE_ENVIO", "CAPACIDADE_RECEBIMENTO", "MAX_NAVIOS", "FROTA_MAX", "QTD_TRANSITO"]
 
 function converte_num(x)
@@ -222,37 +243,40 @@ divide(x) = String.(strip.(split(string(x), ";")))
 # =====================================================================
 # CONJUNTOS
 # =====================================================================
-L    = String.(unique(df_locais.COD_LOCAL))
-T    = sort(unique(df_cap_fabricas.INSTANTE))
-if MODO_TESTE && TESTE_MAX_INSTANTES > 0
-    global T = T[1:min(TESTE_MAX_INSTANTES, length(T))]
+# Todas as estruturas usadas dentro de construir_modelo/extrair_resultado são `const`:
+# em Julia, globais não-const são type-unstable e deixam os laços do modelo muito mais lentos.
+const L    = String.(unique(df_locais.COD_LOCAL))
+const T    = let tt = Int.(sort(unique(df_cap_fabricas.INSTANTE)))
+    (MODO_TESTE && TESTE_MAX_INSTANTES > 0) ? tt[1:min(TESTE_MAX_INSTANTES, length(tt))] : tt
 end
-t0   = first(T)
-tN   = last(T)
-Tset = Set(T)
+const t0   = first(T)
+const tN   = last(T)
+const Tset = Set(T)
 if MODO_TESTE
     global df_demanda = filter(row -> row.INSTANTE in Tset, df_demanda)
 end
 
-C    = String.(filter(row -> ehtrue(row.ATIVO), df_clientes).COD_CLIENTE)
-if MODO_TESTE && TESTE_MAX_CLIENTES > 0 && length(C) > TESTE_MAX_CLIENTES
-    dem_cli = Dict{String,Float64}()
-    for row in eachrow(df_demanda)
-        c = String(row.COD_CLIENTE)
-        dem_cli[c] = get(dem_cli, c, 0.0) + coalesce(row.DEMANDA, 0.0)
+const C = let cc = String.(filter(row -> ehtrue(row.ATIVO), df_clientes).COD_CLIENTE)
+    if MODO_TESTE && TESTE_MAX_CLIENTES > 0 && length(cc) > TESTE_MAX_CLIENTES
+        dem_cli = Dict{String,Float64}()
+        for row in eachrow(df_demanda)
+            c = String(row.COD_CLIENTE)
+            dem_cli[c] = get(dem_cli, c, 0.0) + coalesce(row.DEMANDA, 0.0)
+        end
+        sort!(cc; by = c -> -get(dem_cli, c, 0.0))
+        cc = cc[1:TESTE_MAX_CLIENTES]
     end
-    sort!(C; by = c -> -get(dem_cli, c, 0.0))
-    global C = C[1:TESTE_MAX_CLIENTES]
+    cc
 end
-Cset = Set(C)
+const Cset = Set(C)
 
-F   = String.(filter(row -> String(row.TIPO) == "Fabrica", df_locais).COD_LOCAL)
-POL = String.(filter(row -> String(row.TIPO) == "POL",     df_locais).COD_LOCAL)
-POD = String.(filter(row -> String(row.TIPO) == "POD",     df_locais).COD_LOCAL)
-PODset = Set(POD)
-tipo_local = Dict(String(row.COD_LOCAL) => String(row.TIPO) for row in eachrow(df_locais))
+const F   = String.(filter(row -> String(row.TIPO) == "Fabrica", df_locais).COD_LOCAL)
+const POL = String.(filter(row -> String(row.TIPO) == "POL",     df_locais).COD_LOCAL)
+const POD = String.(filter(row -> String(row.TIPO) == "POD",     df_locais).COD_LOCAL)
+const PODset = Set(POD)
+const tipo_local = Dict{String,String}(String(row.COD_LOCAL) => String(row.TIPO) for row in eachrow(df_locais))
 
-A = unique(String.(df_armador_rotas.COD_ARMADOR))
+const A = unique(String.(df_armador_rotas.COD_ARMADOR))
 
 # Produtos ativos, identificados por um índice inteiro p
 df_prod_ativos = filter(row -> ehtrue(row.ATIVO), df_produtos)
@@ -267,23 +291,23 @@ if MODO_TESTE && TESTE_MAX_PRODUTOS > 0 && nrow(df_prod_ativos) > TESTE_MAX_PROD
     ordem = sortperm([-get(dem_prod, chave_prod(row), 0.0) for row in eachrow(df_prod_ativos)])
     global df_prod_ativos = df_prod_ativos[sort(ordem[1:TESTE_MAX_PRODUTOS]), :]
 end
-prod_id   = [(String(row.FAMILIA_PRODUTO), String(row.LINHA_PRODUTO)) for row in eachrow(df_prod_ativos)]
-P         = 1:length(prod_id)
-linha_de  = [x[2] for x in prod_id]
-idx_produto = Dict(prod_id[p] => p for p in P)
+const prod_id   = Tuple{String,String}[(String(row.FAMILIA_PRODUTO), String(row.LINHA_PRODUTO)) for row in eachrow(df_prod_ativos)]
+const P         = 1:length(prod_id)
+const linha_de  = [x[2] for x in prod_id]
+const idx_produto = Dict(prod_id[p] => p for p in P)
 
 # (1) Fábricas x linhas de produto: só existem variáveis de produção para pares permitidos
-FabricaLinhas = Set((String(row.COD_LOCAL), String(row.LINHA_PRODUTO))
-                    for row in eachrow(df_local_produto) if ehtrue(row.PRODUZ))
-FP    = [(f, p) for f in F for p in P if (f, linha_de[p]) in FabricaLinhas]
-FPset = Set(FP)
+const FabricaLinhas = Set((String(row.COD_LOCAL), String(row.LINHA_PRODUTO))
+                          for row in eachrow(df_local_produto) if ehtrue(row.PRODUZ))
+const FP    = Tuple{String,Int}[(f, p) for f in F for p in P if (f, linha_de[p]) in FabricaLinhas]
+const FPset = Set(FP)
 
 # (2) Cliente só recebe por PODs específicos
-ClientePODs = unique([(String(row.COD_CLIENTE), String(row.COD_LOCAL))
-                      for row in eachrow(df_custo_inland)
-                      if String(row.COD_CLIENTE) in Cset && String(row.COD_LOCAL) in PODset])
-pods_do_cliente = Dict(c   => String[] for c in C)
-clientes_do_pod = Dict(pod => String[] for pod in POD)
+const ClientePODs = unique(Tuple{String,String}[(String(row.COD_CLIENTE), String(row.COD_LOCAL))
+                           for row in eachrow(df_custo_inland)
+                           if String(row.COD_CLIENTE) in Cset && String(row.COD_LOCAL) in PODset])
+const pods_do_cliente = Dict(c   => String[] for c in C)
+const clientes_do_pod = Dict(pod => String[] for pod in POD)
 for (c, pod) in ClientePODs
     push!(pods_do_cliente[c], pod)
     push!(clientes_do_pod[pod], c)
@@ -293,8 +317,8 @@ end
 # =====================================================================
 # [M8] FROTA: lida de dados (com aviso quando usa o valor padrão)
 # =====================================================================
-frota_base = Dict{String,Int}()                 # armador -> limite constante
-frota_mes  = Dict{Tuple{String,Int},Int}()      # (armador, instante) -> limite do mês
+const frota_base = Dict{String,Int}()                 # armador -> limite constante
+const frota_mes  = Dict{Tuple{String,Int},Int}()      # (armador, instante) -> limite do mês
 for col in ("MAX_NAVIOS", "FROTA_MAX")
     hasproperty(df_armador_rotas, Symbol(col)) || continue
     for row in eachrow(df_armador_rotas)
@@ -328,7 +352,7 @@ function calc_teto(a)
     end
     return m
 end
-frota_teto = Dict(a => calc_teto(a) for a in A)
+const frota_teto = Dict{String,Int}(a => calc_teto(a) for a in A)
 
 
 # =====================================================================
@@ -386,14 +410,14 @@ function construir_fabrica_pol()
     end
     return mapa
 end
-FabricaPOL = construir_fabrica_pol()
+const FabricaPOL = construir_fabrica_pol()
 
 
 # =====================================================================
 # PARÂMETROS
 # =====================================================================
-demanda     = Dict{Tuple{String,Int,Int},Float64}()
-preco_venda = Dict{Tuple{String,Int,Int},Float64}()
+const demanda     = Dict{Tuple{String,Int,Int},Float64}()
+const preco_venda = Dict{Tuple{String,Int,Int},Float64}()
 for row in eachrow(df_demanda)
     c   = String(row.COD_CLIENTE)
     key = (String(row.FAMILIA_PRODUTO), String(row.LINHA_PRODUTO))
@@ -413,25 +437,25 @@ function preco_mes(c, p, t)
     return 0.0
 end
 
-custo_inland = Dict((String(row.COD_CLIENTE), String(row.COD_LOCAL)) => row.CUSTO_INLAND_POR_TON
-                    for row in eachrow(df_custo_inland))
+const custo_inland = Dict((String(row.COD_CLIENTE), String(row.COD_LOCAL)) => row.CUSTO_INLAND_POR_TON
+                          for row in eachrow(df_custo_inland))
 
-estoque_inicial = Dict{Tuple{String,Int},Float64}()
+const estoque_inicial = Dict{Tuple{String,Int},Float64}()
 for row in eachrow(df_estoque_init)
     key = (String(row.FAMILIA_PRODUTO), String(row.LINHA_PRODUTO))
     haskey(idx_produto, key) || continue
     estoque_inicial[(String(row.COD_LOCAL), idx_produto[key])] = coalesce(row.QTD_DISPONIVEL, 0.0)
 end
 
-volume_producao = Dict((String(row.COD_LOCAL), row.INSTANTE) => row.VOLUME_PRODUCAO
-                       for row in eachrow(df_cap_fabricas))
+const volume_producao = Dict((String(row.COD_LOCAL), Int(row.INSTANTE)) => row.VOLUME_PRODUCAO
+                             for row in eachrow(df_cap_fabricas))
 
 # Calado/DWT, estoque máximo, capacidades de envio/recebimento, tempo de operação
-caladoDWT   = Dict{String,Float64}()
-max_estoque = Dict{String,Float64}()
-cap_envio   = Dict{String,Float64}()
-cap_receb   = Dict{String,Float64}()
-oper_loc    = Dict{String,Int}()
+const caladoDWT   = Dict{String,Float64}()
+const max_estoque = Dict{String,Float64}()
+const cap_envio   = Dict{String,Float64}()
+const cap_receb   = Dict{String,Float64}()
+const oper_loc    = Dict{String,Int}()
 for row in eachrow(df_locais)
     loc = String(row.COD_LOCAL)
     if String(row.TIPO) in ("POL", "POD") && !ismissing(row.CALADO_DWT) && isfinite(row.CALADO_DWT)
@@ -456,7 +480,7 @@ if isempty(cap_envio) && isempty(cap_receb)
 end
 
 # [M9] Trânsito inicial (carga que já saiu antes do horizonte): (POD, produto, instante de chegada) -> ton
-transito_inicial = Dict{Tuple{String,Int,Int},Float64}()
+const transito_inicial = Dict{Tuple{String,Int,Int},Float64}()
 if df_transito !== nothing
     for row in eachrow(df_transito)
         key = (String(row.FAMILIA_PRODUTO), String(row.LINHA_PRODUTO))
@@ -474,7 +498,7 @@ end
 # ---------------------------------------------------------------------
 # Custos de armazenagem e penalidades (PLACEHOLDERS quando não vêm dos dados)
 # ---------------------------------------------------------------------
-preco_medio = isempty(preco_venda) ? 1.0 : mean(values(preco_venda))
+const preco_medio = isempty(preco_venda) ? 1.0 : mean(values(preco_venda))
 
 const CUSTO_ESTOQUE_FABRICA     = PCT_ESTOQUE_FABRICA * preco_medio
 const CUSTO_ESTOQUE_ARMAZEM_EXT = PCT_ESTOQUE_POL * preco_medio
@@ -488,13 +512,13 @@ const PEN_CAP_ESTOQUE   = PCT_PEN_CAP_ESTOQUE * preco_medio
 const PEN_CAP_PORTO     = PCT_PEN_CAP_PORTO * preco_medio
 const PEN_PROD_OCIOSA   = PCT_PEN_PROD_OCIOSA * preco_medio
 
-custo_estoque_tipo = Dict(
+const custo_estoque_tipo = Dict(
     "Fabrica"        => CUSTO_ESTOQUE_FABRICA,
     "POL"            => CUSTO_ESTOQUE_ARMAZEM_EXT,
     "ArmazemExterno" => CUSTO_ESTOQUE_ARMAZEM_EXT,
     "POD"            => CUSTO_ESTOQUE_POD,
 )
-custo_estoque = Dict{String,Float64}()
+const custo_estoque = Dict{String,Float64}()
 for row in eachrow(df_locais)
     loc = String(row.COD_LOCAL)
     if hasproperty(df_locais, :CUSTO_ESTOQUE) && !ismissing(row.CUSTO_ESTOQUE)
@@ -513,15 +537,22 @@ end
 # (4) ROTAS MULTI-STOP
 #     carrega em origens[1], origens[2], ... (POLs) no instante de partida t
 #     descarrega em destinos[1], destinos[2], ... (PODs) com chegada em t + lag_desc[k]
-#     Colunas opcionais: TEMPO_PARADAS (tempos acumulados por destino, ";"), TEMPO_VOLTA
+#     Colunas opcionais: TEMPO_PARADAS (tempos acumulados por destino, ";"),
+#     TEMPO_VOLTA (retorno) ou TEMPO_IDA_VOLTA (ida + volta; retorno = TEMPO_IDA_VOLTA - TEMPO_IDA)
 # =====================================================================
-rotas = NamedTuple[]
+const rotas = Rota[]
 for (i, row) in enumerate(eachrow(df_armador_rotas))
     origens  = divide(row.COD_LOCAL_ORIGENS)
     destinos = divide(row.COD_LOCAL_DESTINOS)
     ida      = arred(row.TEMPO_IDA)
-    volta    = (hasproperty(df_armador_rotas, :TEMPO_VOLTA) && !ismissing(row.TEMPO_VOLTA)) ?
-               arred(row.TEMPO_VOLTA) : ida
+    volta    = if hasproperty(df_armador_rotas, :TEMPO_VOLTA) && !ismissing(row.TEMPO_VOLTA)
+        arred(row.TEMPO_VOLTA)
+    elseif hasproperty(df_armador_rotas, :TEMPO_IDA_VOLTA) && !ismissing(row.TEMPO_IDA_VOLTA)
+        # enunciado 2.4.1: navio fica indisponível por transit time + return time
+        max(0, arred(row.TEMPO_IDA_VOLTA) - ida)
+    else
+        ida
+    end
     n = length(destinos)
 
     if hasproperty(df_armador_rotas, :TEMPO_PARADAS) && !ismissing(row.TEMPO_PARADAS)
@@ -541,11 +572,9 @@ for (i, row) in enumerate(eachrow(df_armador_rotas))
 
     ciclo = max(1, ida + volta + sum(tempo_oper(l) for l in vcat(origens, destinos)))
 
-    push!(rotas, (id = i, armador = String(row.COD_ARMADOR),
-                  origens = origens, destinos = destinos,
-                  frete = row.FRETE_POR_TON,
-                  min_in = row.MIN_INTAKE, max_in = row.MAX_INTAKE,
-                  lag_desc = lag_desc, ciclo = ciclo, ida = ida, volta = volta))
+    push!(rotas, Rota(i, i, String(row.COD_ARMADOR), origens, destinos,
+                      Float64(row.FRETE_POR_TON), Float64(row.MIN_INTAKE), Float64(row.MAX_INTAKE),
+                      lag_desc, ciclo, ida, volta))
 end
 
 for r in rotas
@@ -576,7 +605,7 @@ function filtrar_dominancia(rs)
 end
 
 # Renumera os ids (1..N) para indexar o modelo; guarda o id original em id_orig (rotas novas: id negativo)
-renumerar(rs) = [merge(r, (id = k, id_orig = get(r, :id_orig, r.id))) for (k, r) in enumerate(rs)]
+renumerar(rs) = Rota[com_id(r, k) for (k, r) in enumerate(rs)]
 
 # Mantém as K rotas mais baratas de cada corredor (armador, POL, POD, tempo de chegada, ciclo, intake).
 function prefiltro_por_corredor(rs, k)
@@ -598,13 +627,11 @@ function prefiltro_por_corredor(rs, k)
     return rs[sort(collect(manter))]
 end
 
-rotas_dominadas = renumerar(FILTRO_DOMINANCIA ? filtrar_dominancia(rotas) : rotas)
+const rotas_dominadas = renumerar(FILTRO_DOMINANCIA ? filtrar_dominancia(rotas) : rotas)
 println("Rotas no arquivo: ", length(rotas), " -> após filtro de dominância (exato): ", length(rotas_dominadas))
-rotas_base = rotas_dominadas
+const rotas_base = PREFILTRO_K > 0 ? renumerar(prefiltro_por_corredor(rotas_dominadas, PREFILTRO_K)) : rotas_dominadas
 if PREFILTRO_K > 0
-    n_antes_pf = length(rotas_dominadas)
-    rotas_base = renumerar(prefiltro_por_corredor(rotas_dominadas, PREFILTRO_K))
-    println("Pré-filtro por corredor (K = ", PREFILTRO_K, "): ", n_antes_pf, " -> ", length(rotas_base), " rotas")
+    println("Pré-filtro por corredor (K = ", PREFILTRO_K, "): ", length(rotas_dominadas), " -> ", length(rotas_base), " rotas")
 end
 
 
@@ -657,6 +684,22 @@ dem_pod = Dict(pod => Set{Int}() for pod in POD)
 for pod in POD, c in clientes_do_pod[pod], p in P
     (c, p) in CPset_c && push!(dem_pod[pod], p)
 end
+# Incluir produtos com estoque ou trânsito inicial nos PODs (balanço exige variável)
+for pod in POD, p in P
+    get(estoque_inicial, (pod, p), 0.0) > 0 && push!(dem_pod[pod], p)
+end
+for (pod, p, _ta) in keys(transito_inicial)
+    haskey(dem_pod, pod) && push!(dem_pod[pod], p)
+end
+
+# Produtos com produção ou estoque inicial em cada fábrica
+prods_fab = Dict(f => Set{Int}() for f in F)
+for (f, p) in FP
+    push!(prods_fab[f], p)
+end
+for f in F, p in P
+    get(estoque_inicial, (f, p), 0.0) > 0 && push!(prods_fab[f], p)
+end
 
 # Produtos que podem fluir de um POL para um POD
 prod_par = Dict{Tuple{String,String},Vector{Int}}()
@@ -697,7 +740,9 @@ n_navios = length(segmentos)
 n_x = sum(length(produtos_do_par(pol, pod))
           for (pol, pod, lag) in trechos for t in T if (t + lag) in Tset; init = 0)
 n_vendas = nT * sum(1 for (c, pod) in ClientePODs for p in P if (c, p) in CPset_c; init = 0)
-n_denso  = (length(L) + length(POL) + 2 * length(POD)) * nP * nT
+n_denso  = (sum(length(v) for v in values(prods_fab); init = 0) +
+            sum(length(v) for v in values(disp_pol); init = 0) * 2 +
+            sum(length(v) for v in values(dem_pod); init = 0) * 3) * nT
 n_outros = 2 * length(FP) * nT + length(CP_c) * (nT + 1)
 n_coorte = 0
 for cp in pares_coorte, td in tds_cp[cp]
@@ -730,6 +775,10 @@ isempty(segmentos) && error("Nenhuma rota viável: verifique produção nos POLs
 model = direct_model(HiGHS.Optimizer())
 set_string_names_on_creation(model, false)
 set_optimizer_attribute(model, "time_limit", tempo_limite)
+try
+    set_optimizer_attribute(model, "threads", Sys.CPU_THREADS)
+catch
+end
 if relaxar
     set_optimizer_attribute(model, "solver", SOLVER_RELAXACAO)
     SOLVER_RELAXACAO == "ipm" && set_optimizer_attribute(model, "run_crossover", IPM_CROSSOVER ? "on" : "off")
@@ -753,11 +802,25 @@ function nova_var(nome; lb = 0.0, ub = Inf, tipo = :cont)
     return v
 end
 
-# ---------------- Variáveis densas ----------------
-@variable(model, estoque[loc in L, p in P, t in T] >= 0)
-@variable(model, load[pol in POL, p in P, t in T] >= 0)
-@variable(model, unload[pod in POD, p in P, t in T] >= 0)
-@variable(model, folga_ss[pod in POD, p in P, t in T] >= 0)
+# ---------------- Variáveis esparsas de estoque e porto ----------------
+# Criadas apenas para pares (local, produto) com produção, demanda ou estoque inicial.
+estoque  = Dict{Tuple{String,Int,Int},VariableRef}()
+load     = Dict{Tuple{String,Int,Int},VariableRef}()
+unload   = Dict{Tuple{String,Int,Int},VariableRef}()
+folga_ss = Dict{Tuple{String,Int,Int},VariableRef}()
+
+for f in F, p in prods_fab[f], t in T
+    estoque[(f, p, t)] = nova_var("estoque_f")
+end
+for pol in POL, p in disp_pol[pol], t in T
+    estoque[(pol, p, t)] = nova_var("estoque_pol")
+    load[(pol, p, t)]    = nova_var("load")
+end
+for pod in POD, p in dem_pod[pod], t in T
+    estoque[(pod, p, t)]  = nova_var("estoque_pod")
+    unload[(pod, p, t)]   = nova_var("unload")
+    folga_ss[(pod, p, t)] = nova_var("folga_ss")
+end
 
 # ---------------- Variáveis esparsas ----------------
 producao = Dict{Tuple{String,Int,Int},VariableRef}()
@@ -851,35 +914,35 @@ for ((rid, t, k), v) in faixa
     desconto = FAIXAS_FRETE[k][3]
     add_to_expression!(frete, rotas[rid].frete * (1 - desconto), v)
 end
-for loc in L, p in P, t in T
+for ((loc, p, t), v) in estoque
     custo_estoque[loc] == 0 && continue
-    add_to_expression!(holding, custo_estoque[loc], estoque[loc, p, t])
+    add_to_expression!(holding, custo_estoque[loc], v)
 end
 for ((c, p, t), v) in backlog
     t < tN && pen_bl > 0 && add_to_expression!(pen_backlog, pen_bl, v)
 end
-for v in folga_ss
+for (_, v) in folga_ss
     add_to_expression!(pen_ss, PEN_SS, v)
 end
 for (_, v) in spot
     pen_sp > 0 && add_to_expression!(pen_spot, pen_sp, v)
 end
 if VALOR_RESIDUAL_PCT > 0
-    for pod in POD, p in P
-        add_to_expression!(residual, VALOR_RESIDUAL_PCT * preco_medio, estoque[pod, p, tN])
+    for pod in POD, p in dem_pod[pod]
+        haskey(estoque, (pod, p, tN)) && add_to_expression!(residual, VALOR_RESIDUAL_PCT * preco_medio, estoque[(pod, p, tN)])
     end
 end
 
 # =====================================================================
 # RESTRIÇÕES
 # =====================================================================
-estoque_ant(loc, p, t) = t == t0 ? limpa(get(estoque_inicial, (loc, p), 0.0)) : estoque[loc, p, t-1]
+estoque_ant(loc, p, t) = t == t0 ? limpa(get(estoque_inicial, (loc, p), 0.0)) : estoque[(loc, p, t-1)]
 
 # ---------- Balanço de estoque na fábrica ----------
-for f in F, p in P, t in T
+for f in F, p in prods_fab[f], t in T
     prod_ft  = (f, p) in FPset ? producao[(f, p, t)] : 0.0
     envio_ft = (f, p) in FPset ? fab_pol[(f, p, t)]  : 0.0
-    @constraint(model, estoque[f, p, t] == estoque_ant(f, p, t) + prod_ft - envio_ft)
+    @constraint(model, estoque[(f, p, t)] == estoque_ant(f, p, t) + prod_ft - envio_ft)
     # [M1] se o envio fábrica->POL for instantâneo, estoque >= 0 já limita o envio ao disponível
     (!FABRICA_POL_MESMO_MES && (f, p) in FPset) &&
         @constraint(model, fab_pol[(f, p, t)] <= estoque_ant(f, p, t))
@@ -902,19 +965,19 @@ for f in F, t in T
 end
 
 # ---------- Balanço de estoque no POL ----------
-for pol in POL, p in P, t in T
+for pol in POL, p in disp_pol[pol], t in T
     entradas = [fab_pol[(f, p, t)] for f in F if get(FabricaPOL, f, "") == pol && (f, p) in FPset]
-    @constraint(model, estoque[pol, p, t] ==
-        estoque_ant(pol, p, t) + sum(entradas; init = 0.0) - load[pol, p, t])
+    @constraint(model, estoque[(pol, p, t)] ==
+        estoque_ant(pol, p, t) + sum(entradas; init = 0.0) - load[(pol, p, t)])
     # [M1] só limita ao estoque anterior se o envio fábrica->POL não for instantâneo
-    !FABRICA_POL_MESMO_MES && @constraint(model, load[pol, p, t] <= estoque_ant(pol, p, t))
+    !FABRICA_POL_MESMO_MES && @constraint(model, load[(pol, p, t)] <= estoque_ant(pol, p, t))
 end
 
 # ---------- Balanço de estoque no POD ----------
-for pod in POD, p in P, t in T
+for pod in POD, p in dem_pod[pod], t in T
     saidas = [vendas[(c, pod, p, t)] for c in clientes_do_pod[pod] if (c, p) in CPset_c]
-    @constraint(model, estoque[pod, p, t] ==
-        estoque_ant(pod, p, t) + unload[pod, p, t] - sum(saidas; init = 0.0))
+    @constraint(model, estoque[(pod, p, t)] ==
+        estoque_ant(pod, p, t) + unload[(pod, p, t)] - sum(saidas; init = 0.0))
 end
 
 # ---------- Conservação de demanda com backlog e spot ----------
@@ -955,16 +1018,16 @@ function demanda_pod(pod, p, t)
 end
 
 if cobertura > 0
-    for pod in POD, p in P, t in T
+    for pod in POD, p in dem_pod[pod], t in T
         if BASE_ESTOQUE_SEGURANCA == :vendas
             tt = t < tN ? t + 1 : t
             vn = [vendas[(c, pod, p, tt)] for c in clientes_do_pod[pod] if (c, p) in CPset_c]
             isempty(vn) && continue
-            @constraint(model, estoque[pod, p, t] + folga_ss[pod, p, t] >= cobertura * sum(vn; init = 0.0))
+            @constraint(model, estoque[(pod, p, t)] + folga_ss[(pod, p, t)] >= cobertura * sum(vn; init = 0.0))
         else
             req = cobertura * demanda_pod(pod, p, t)
             req > 1e-3 / ESCALA_TON || continue
-            @constraint(model, estoque[pod, p, t] + folga_ss[pod, p, t] >= req)
+            @constraint(model, estoque[(pod, p, t)] + folga_ss[(pod, p, t)] >= req)
         end
     end
 end
@@ -979,8 +1042,9 @@ if PEN_BALANCEAMENTO > 0
         cmax = nova_var("cmax")
         cmin = nova_var("cmin")
         for (pod, rq) in zip(pods_b, reqs)
-            @constraint(model, cmax >= estoque[pod, p, t] / rq)
-            @constraint(model, cmin <= estoque[pod, p, t] / rq)
+            ev = get(estoque, (pod, p, t), 0.0)
+            @constraint(model, cmax >= ev / rq)
+            @constraint(model, cmin <= ev / rq)
         end
         add_to_expression!(pen_bal,  PEN_BALANCEAMENTO * mean(reqs), cmax)
         add_to_expression!(pen_bal, -PEN_BALANCEAMENTO * mean(reqs), cmin)
@@ -990,25 +1054,31 @@ end
 # ---------- Capacidade máxima de estoque (fim do mês) ----------
 for loc in L, t in T
     haskey(max_estoque, loc) || continue
-    @constraint(model, sum(estoque[loc, p, t] for p in P) <= max_estoque[loc] + folga(:cap_estoque, (loc, t), PEN_CAP_ESTOQUE))
+    prods_loc = haskey(prods_fab, loc) ? prods_fab[loc] :
+                haskey(disp_pol, loc)  ? disp_pol[loc]  :
+                get(dem_pod, loc, Set{Int}())
+    isempty(prods_loc) && continue
+    @constraint(model, sum(estoque[(loc, p, t)] for p in prods_loc) <= max_estoque[loc] + folga(:cap_estoque, (loc, t), PEN_CAP_ESTOQUE))
 end
 
 # ---------- [M3] Capacidade no PICO: estoque anterior + entrada do mês ----------
 if RESTRINGIR_PICO_ESTOQUE
     for pod in POD, t in T
         haskey(max_estoque, pod) || continue
+        isempty(dem_pod[pod]) && continue
         e = AffExpr(0.0)
-        for p in P
+        for p in dem_pod[pod]
             a = estoque_ant(pod, p, t)
             a isa Number ? (e.constant += a) : add_to_expression!(e, 1.0, a)
-            add_to_expression!(e, 1.0, unload[pod, p, t])
+            add_to_expression!(e, 1.0, unload[(pod, p, t)])
         end
         @constraint(model, e <= max_estoque[pod] + folga(:cap_pico, (pod, t), PEN_CAP_ESTOQUE))
     end
     for pol in POL, t in T
         haskey(max_estoque, pol) || continue
+        isempty(disp_pol[pol]) && continue
         e = AffExpr(0.0)
-        for p in P
+        for p in disp_pol[pol]
             a = estoque_ant(pol, p, t)
             a isa Number ? (e.constant += a) : add_to_expression!(e, 1.0, a)
             for f in F
@@ -1023,11 +1093,13 @@ end
 # ---------- [M3] Capacidades de envio (POL) e recebimento (POD) por mês ----------
 for pol in POL, t in T
     haskey(cap_envio, pol) || continue
-    @constraint(model, sum(load[pol, p, t] for p in P) <= cap_envio[pol] + folga(:cap_envio, (pol, t), PEN_CAP_PORTO))
+    isempty(disp_pol[pol]) && continue
+    @constraint(model, sum(load[(pol, p, t)] for p in disp_pol[pol]) <= cap_envio[pol] + folga(:cap_envio, (pol, t), PEN_CAP_PORTO))
 end
 for pod in POD, t in T
     haskey(cap_receb, pod) || continue
-    @constraint(model, sum(unload[pod, p, t] for p in P) <= cap_receb[pod] + folga(:cap_receb, (pod, t), PEN_CAP_PORTO))
+    isempty(dem_pod[pod]) && continue
+    @constraint(model, sum(unload[(pod, p, t)] for p in dem_pod[pod]) <= cap_receb[pod] + folga(:cap_receb, (pod, t), PEN_CAP_PORTO))
 end
 
 # ---------- Restrições por rota e instante de partida ----------
@@ -1108,12 +1180,12 @@ for ((i, p, t), v) in xf
     add_to_expression!(get!(() -> AffExpr(0.0), carga_pol,    (pol, p, t)),       1.0, v)
     add_to_expression!(get!(() -> AffExpr(0.0), descarga_pod, (pod, p, t + lag)), 1.0, v)
 end
-for pol in POL, p in P, t in T
-    @constraint(model, load[pol, p, t] == get(carga_pol, (pol, p, t), AffExpr(0.0)))
+for pol in POL, p in disp_pol[pol], t in T
+    @constraint(model, load[(pol, p, t)] == get(carga_pol, (pol, p, t), AffExpr(0.0)))
 end
 # [M9] unload = chegadas das viagens do horizonte + trânsito inicial
-for pod in POD, p in P, ta in T
-    @constraint(model, unload[pod, p, ta] ==
+for pod in POD, p in dem_pod[pod], ta in T
+    @constraint(model, unload[(pod, p, ta)] ==
         get(descarga_pod, (pod, p, ta), AffExpr(0.0)) + limpa(get(transito_inicial, (pod, p, ta), 0.0)))
 end
 
@@ -1205,13 +1277,14 @@ function extrair_resultado(res, cen, rotas_m, obj_rel, st1, n_usadas)
     df_folgas  = folgas_usadas(res)
     viol_flex  = sum(df_folgas.VALOR[df_folgas.UNIDADE .== "ton"]; init = 0.0)
 
-    estoque_v  = value.(res.estoque)
-    folga_v    = value.(res.folga_ss)
+    estoque_v  = Dict(k => value(v) for (k, v) in res.estoque)
+    folga_v    = Dict(k => value(v) for (k, v) in res.folga_ss)
 
     spot_ton   = ESCALA_TON * sum(value(v) for (_, v) in res.spot; init = 0.0)
-    viol_ss    = ESCALA_TON * sum(folga_v)
+    viol_ss    = ESCALA_TON * sum(values(folga_v); init = 0.0)
     backlog_t  = ESCALA_TON * sum(value(v) for ((c, p, t), v) in res.backlog if t < tN; init = 0.0)
-    est_pod    = ESCALA_TON * sum(estoque_v[pod, p, t] for pod in POD, p in P, t in T; init = 0.0) / length(T)
+    _PODset    = Set(POD)
+    est_pod    = ESCALA_TON * sum(v for ((loc, p, t), v) in estoque_v if loc in _PODset; init = 0.0) / length(T)
 
     # ---------- Produção por fábrica ----------
     df_prod = DataFrame(FABRICA = String[], FAMILIA = String[], LINHA = String[], INSTANTE = Int[], TON = Float64[])
@@ -1285,8 +1358,8 @@ function extrair_resultado(res, cen, rotas_m, obj_rel, st1, n_usadas)
     # ---------- Estoques ----------
     df_est = DataFrame(LOCAL = String[], TIPO = String[], FAMILIA = String[], LINHA = String[],
         INSTANTE = Int[], TON = Float64[])
-    for loc in L, p in P, t in T
-        q = ESCALA_TON * estoque_v[loc, p, t]
+    for ((loc, p, t), q_raw) in estoque_v
+        q = ESCALA_TON * q_raw
         q > 1e-3 && push!(df_est, (loc, tipo_local[loc], prod_id[p][1], prod_id[p][2], t, q))
     end
 
@@ -1360,8 +1433,8 @@ function extrair_resultado(res, cen, rotas_m, obj_rel, st1, n_usadas)
 
     # ---------- Violações de estoque de segurança e backlog ----------
     df_viol = DataFrame(POD = String[], FAMILIA = String[], LINHA = String[], INSTANTE = Int[], TON = Float64[])
-    for pod in POD, p in P, t in T
-        q = ESCALA_TON * folga_v[pod, p, t]
+    for ((pod, p, t), q_raw) in folga_v
+        q = ESCALA_TON * q_raw
         q > 1e-3 && push!(df_viol, (pod, prod_id[p][1], prod_id[p][2], t, q))
     end
     df_back = DataFrame(CLIENTE = String[], FAMILIA = String[], LINHA = String[], INSTANTE = Int[], TON = Float64[])

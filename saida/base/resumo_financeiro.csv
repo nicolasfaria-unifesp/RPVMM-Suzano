@@ -1,0 +1,13 @@
+ITEM;VALOR
+Receita;9,73481568173576e8
+Valor residual estoque final;0,0
+Frete maritimo;-6,300356715768621e7
+Custo inland;-1,9584340132845826e6
+Custo de estoque;-3,885005660357287e6
+LUCRO OPERACIONAL;9,04634561342248e8
+Penalidade backlog;-6,207424575998737e6
+Penalidade estoque de seguranca;-9,996528272461044e6
+Penalidade spot / nao atendido;-0,0
+Penalidade balanceamento;-422014,673814317
+Penalidade restricoes flexiveis;-0,0
+LUCRO (OBJETIVO);8,880085938199735e8
